@@ -49,9 +49,7 @@ enum GameStyle {
 
 const startFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const ranks = 8, files = 8;
-const Color deepBlue = Color(0xFF0000FF);
-const Color deepRed = Color(0xFFFF0000);
-const Color deepYellow = Color(0xFFFFFF00);
+int get numSquares => (ranks * files);
 
 enum ChessColor {
   none("x",null),
@@ -76,6 +74,11 @@ enum PieceType {
 }
 
 enum ColorComponent {red,green,blue}
+
+const Color deepBlue = Color(0xFF0000FF);
+const Color deepRed = Color(0xFFFF0000);
+const Color deepYellow = Color(0xFFFFFF00);
+
 enum ColorStyle {
   heatmap(MatrixColorScheme(deepBlue,deepRed,Colors.black)),
   lava(MatrixColorScheme(deepYellow,deepRed,Colors.black)),
@@ -86,7 +89,7 @@ enum ColorStyle {
   final MatrixColorScheme colorScheme;
   const ColorStyle(this.colorScheme);
 }
-enum MixStyle {pigment,checker,add}
+enum MixStyle {pigment,checker,additive, none}
 
 class ColorArray {
   final List<int> values;
@@ -138,6 +141,11 @@ enum SquareShade {
 }
 
 class Square {
+
+  static int index(int file, int rank) {
+    return (rank * 8) + file;
+  }
+
   final Color bigRed = const Color.fromARGB(255, 255, 0, 0);
   final Color bigGreen = const Color.fromARGB(255, 0,255, 0);
   final Color bigBlue = const Color.fromARGB(255, 0,0, 255);
@@ -150,13 +158,14 @@ class Square {
   void setControl(ControlTable c, MatrixColorScheme colorScheme, MixStyle mixStyle, int maxControl) {
     control = c;
     color = switch(mixStyle) {
-      MixStyle.add => getAddidiveColor(colorScheme, maxControl),
+      MixStyle.none => getUnmixedColor(colorScheme, maxControl),
       MixStyle.checker => getCheckerColor(colorScheme, maxControl),
-      MixStyle.pigment => getMixColor(colorScheme, maxControl),
+      MixStyle.pigment => getMixColor(colorScheme, maxControl, false),
+      MixStyle.additive => getMixColor(colorScheme, maxControl, true),
     };
   }
 
-  ColorArray getAddidiveColor(MatrixColorScheme colorScheme, int maxControl) {
+  ColorArray getUnmixedColor(MatrixColorScheme colorScheme, int maxControl) {
     ColorArray colorMatrix = ColorArray.fromColor(colorScheme.voidColor);
     double controlGrad =  min(control.totalControl.abs(),maxControl) / maxControl;
     if (control.totalControl > 0) {
@@ -181,7 +190,7 @@ class Square {
     );
   }
 
-  ColorArray getMixColor(MatrixColorScheme colorScheme, int maxControl) {
+  ColorArray getMixColor(MatrixColorScheme colorScheme, int maxControl, bool additive) {
     double whiteControlGrad =  min(control.whiteControl,maxControl) / maxControl;
     double blackControlGrad =  min(control.blackControl,maxControl) / maxControl;
 
@@ -202,37 +211,46 @@ class Square {
     } else if (control.whiteControl == 0 && control.blackControl == 0) {
       return ColorArray.fromColor(colorScheme.voidColor);
     }
-    var mixedColor = js.context.callMethod("mixColors",[
-      whiteMatrix.red,whiteMatrix.green,whiteMatrix.blue,
-      blackMatrix.red,blackMatrix.green,blackMatrix.blue,
-      .5 //TODO: show diffs
-    ]); //print("Mixed Color: $mixedColor");
-    return ColorArray(mixedColor[0], mixedColor[1], mixedColor[2]);
+
+    if (additive) {
+      return ColorArray(
+          max(whiteMatrix.red,blackMatrix.red),
+          max(whiteMatrix.green,blackMatrix.green),
+          max(whiteMatrix.blue,blackMatrix.blue)
+      );
+    } else {
+      var mixedColor = js.context.callMethod("mixColors",[
+        whiteMatrix.red,whiteMatrix.green,whiteMatrix.blue,
+        blackMatrix.red,blackMatrix.green,blackMatrix.blue,
+        .5 //TODO: show diffs
+      ]); //print("Mixed Color: $mixedColor");
+      return ColorArray(mixedColor[0], mixedColor[1], mixedColor[2]);
+    }
   }
 }
 
 class Piece {
-  late final PieceType type;
-  late final ChessColor color;
+  static final Map<String,Image> imgMap = {};
+  final PieceType type;
+  final ChessColor color;
+  static const whitePieces = [
+     Piece(PieceType.pawn,ChessColor.white),
+     Piece(PieceType.knight,ChessColor.white),
+     Piece(PieceType.bishop,ChessColor.white),
+     Piece(PieceType.rook,ChessColor.white),
+     Piece(PieceType.queen,ChessColor.white),
+     Piece(PieceType.king,ChessColor.white),
+  ];
+  static const blackPieces = [
+    Piece(PieceType.pawn,ChessColor.black),
+    Piece(PieceType.knight,ChessColor.black),
+    Piece(PieceType.bishop,ChessColor.black),
+    Piece(PieceType.rook,ChessColor.black),
+    Piece(PieceType.queen,ChessColor.black),
+    Piece(PieceType.king,ChessColor.black),
+  ];
 
-  Piece(this.type,this.color);
-  Piece.fromChar(String char) {
-    type = _decodeChar(char);
-    color = char == char.toUpperCase() ? ChessColor.white : ChessColor.black;
-  }
-  Piece.fromDartChess(dc.Piece p) {
-    type = _decodePieceType(p.type);
-    color = p.color == dc.Color.BLACK ? ChessColor.black : ChessColor.white;
-  }
-  Piece.fromDartChessType(dc.PieceType pt, this.color) {
-    type = _decodePieceType(pt);
-  }
-
-  bool eq(PieceType t, ChessColor c) {
-    return type == t && color == c;
-  }
-
-  PieceType _decodePieceType(dc.PieceType pt) {
+  static PieceType _decodePieceType(dc.PieceType pt) {
     return switch(pt) {
       dc.PieceType.PAWN => PieceType.pawn,
       dc.PieceType.KNIGHT => PieceType.knight,
@@ -244,7 +262,7 @@ class Piece {
     };
   }
 
-  PieceType _decodeChar(String char) {
+  static PieceType _decodeChar(String char) {
     return switch(char.toUpperCase()) {
       "P" => PieceType.pawn,
       "N" => PieceType.knight,
@@ -257,10 +275,36 @@ class Piece {
     };
   }
 
+  const Piece(this.type,this.color);
+  Piece.fromChar(String char) :
+        type = _decodeChar(char),
+        color = char == char.toUpperCase() ? ChessColor.white : ChessColor.black;
+
+  Piece.fromDartChess(dc.Piece p) :
+    type = _decodePieceType(p.type),
+    color = p.color == dc.Color.BLACK ? ChessColor.black : ChessColor.white;
+
+
+  Piece.fromDartChessType(dc.PieceType pt, this.color) :
+    type = _decodePieceType(pt);
+
+
+  bool eq(PieceType t, ChessColor c) {
+    return type == t && color == c;
+  }
+
+  String toFilename({ext = ".png"}) {
+    return toString() + ext;
+  }
+
+  String toLetter({bool capColor = true}) {
+    String letter = (type == PieceType.knight) ? "n" : (type == PieceType.none) ? "x" : type.name[0];
+    return color == ChessColor.white ? letter.toUpperCase() : letter.toLowerCase();
+  }
+
   @override
-  String toString({bool white = false}) {
-    String pieceChar = (type == PieceType.knight) ? "n" : (type == PieceType.none) ? "-" : type.name[0];
-    return (white || color == ChessColor.white ? "w" : "b") + pieceChar.toUpperCase();
+  String toString({bool white = false}) { //String pieceChar = (type == PieceType.knight) ? "n" : (type == PieceType.none) ? "x" : type.name[0];
+    return (white || color == ChessColor.white ? "w" : "b") + toLetter(capColor: false).toUpperCase();
   }
 }
 

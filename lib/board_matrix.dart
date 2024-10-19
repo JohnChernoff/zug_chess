@@ -1,5 +1,6 @@
 library zug_chess;
 
+import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -16,33 +17,37 @@ var boardLogger = Logger(
 class BoardMatrix {
   final String fen;
   final int width, height;
-  final int maxControl;
+  final int? maxControl;
   final Color edgeColor;
   final MatrixColorScheme colorScheme;
   final MixStyle mixStyle;
   final bool blackPOV;
   final List<ControlTable>? controlList;
-  late final List<List<Square>> squares;
+  late final List<Square> squares;
   late final bool offScreen;
   ui.Image? image;
 
-  static List<List<Square>> createSquares({List<ControlTable>? controlList}) { //print("Control List: $controlList");
-    return List<List<Square>>.generate(
-        ranks, (y) => List<Square>.generate(
-        files, (x) => Square(
-          Piece(PieceType.none,ChessColor.none),
-          (x + y).isEven ? SquareShade.light : SquareShade.dark,
-          control: controlList?.elementAt((y * 8) + x) ?? const ControlTable(0, 0)),
-          growable: false), growable: false);
+  static List<Square> createSquares({List<ControlTable>? controlList}) { //print("Control List: $controlList");
+
+    return List.generate(controlList?.length ?? numSquares, (i) => Square(
+              const Piece(PieceType.none,ChessColor.none),
+              (i).isEven ? SquareShade.light : SquareShade.dark, //control: controlList?.elementAt(numSquares - 1 - i) ?? const ControlTable(0, 0)));
+              control: controlList?.elementAt(i) ?? const ControlTable(0, 0)));
   }
 
-  BoardMatrix(this.fen,this.width,this.height,this.colorScheme,this.mixStyle,UIImageCallback imgCall,
-      { this.blackPOV  = false, this.maxControl = 5, this.edgeColor = Colors.black, this.controlList, this.offScreen = false}) {
+  BoardMatrix(this.fen,this.width,this.height,UIImageCallback imgCall, {
+    this.colorScheme = const MatrixColorScheme(deepYellow, deepBlue, Colors.black),
+    this.mixStyle = MixStyle.pigment,
+    this.blackPOV  = false,
+    this.maxControl,
+    this.edgeColor = Colors.black,
+    this.controlList,
+    this.offScreen = false}) {
     loadImg(imgCall);
   }
 
   BoardMatrix.fromFEN(this.fen, {required this.colorScheme, this.width = 480, this.height = 480, this.offScreen = false,
-    this.mixStyle = MixStyle.pigment, this.maxControl = 2, this.edgeColor = Colors.black, this.blackPOV = false, this.controlList});
+    this.mixStyle = MixStyle.pigment, this.maxControl, this.edgeColor = Colors.black, this.blackPOV = false, this.controlList});
 
   Uint8List generateRawImage() {
     squares = createSquares(controlList: controlList);
@@ -77,23 +82,13 @@ class BoardMatrix {
           file += int.parse(char); //todo: try
         } else {
           if (blackPOV) {
-            squares[fenRanks.length - 1 - file++][fenRanks.length - 1 - rank].piece = piece;
+            square(fenRanks.length - 1 - file++, fenRanks.length - 1 - rank).piece = piece;
           } else {
-            squares[file++][rank].piece = piece;
+            square(file++,rank).piece = piece;
           }
         }
       }
     }
-  }
-
-  List<Square> getSquares() {
-    List<Square> squareList = [];
-    for (int y = 0; y < ranks; y++) {
-      for (int x = 0; x < files; x++) {
-        squareList.add(squares[x][y]);
-      }
-    }
-    return squareList;
   }
 
   int colorVal(ChessColor color) {
@@ -104,34 +99,34 @@ class BoardMatrix {
     return getSquare(p).piece.type == t;
   }
 
-  Square getSquare(Coord p) {
-    return squares[p.x][p.y];
-  }
+  Square square(int file, int rank) => squares[Square.index(file,rank)];
+  Square getSquare(Coord p) => squares[Square.index(p.x,p.y)];
 
-  int getMaxCumulativeControl() {
+  int calcMaxControl() {
     int mc = 0;
     for (int y = 0; y < ranks; y++) {
-      for (int x = 0; x < files; x++) {
-        int tc = getSquare(Coord(x,y)).control.totalControl.abs();
-        if (tc > mc) mc = tc;
+      for (int x = 0; x < files; x++) { //int tc = getSquare(Coord(x,y)).control.totalControl.abs(); //if (tc > mc) mc = tc;
+        final sqr = getSquare(Coord(x,y));
+        int c = max(sqr.control.whiteControl.abs(),sqr.control.blackControl.abs());
+        if (c > mc) mc = c;
       }
     }
     return mc;
   }
 
   void updateControl({squaresInitialized = false}) {
-    int mcc = (squaresInitialized && !offScreen) ? getMaxCumulativeControl() : 0;  //print("Max Control: $mc");
+    int mc = (squaresInitialized && !offScreen) ? calcMaxControl() : maxControl ?? calcMaxControl();  //print("Max Control: $mc");
     for (int y = 0; y < ranks; y++) {
       for (int x = 0; x < files; x++) {
         if (squaresInitialized) { //print("Current Control: ${squares[x][y].control}");
           if (offScreen) {
-            squares[x][y].control = calcControl(Coord(x,y),cTab: squares[x][y].control);
+            square(x,y).control = calcControl(Coord(x,y),cTab: square(x,y).control);
           }
           else {
-            squares[x][y].setControl(squares[x][y].control,colorScheme,MixStyle.add,mcc);
+            square(x,y).setControl(square(x,y).control,colorScheme,mixStyle,mc);
           }
         } else {
-          squares[x][y].setControl(calcControl(Coord(x,y)),colorScheme,mixStyle,maxControl);
+          square(x,y).setControl(calcControl(Coord(x,y)),colorScheme,mixStyle,mc);
         }
       }
     }
@@ -140,7 +135,7 @@ class BoardMatrix {
   ControlTable calcControl(Coord p, {cTab = const ControlTable(0, 0)}) {
     cTab = cTab.add(knightControl(p));
     cTab = cTab.add(diagControl(p));
-    cTab = cTab.add(lineControl(p)); //if (dummy) print("$p : $control");
+    cTab = cTab.add(lineControl(p));
     return cTab;
   }
 
@@ -248,8 +243,8 @@ class BoardMatrix {
         if (colorSE == null) { boardLogger.w("WTF: $fen"); return imgData; }  //print("$colorSE , $colorSW, $colorNE, $colorNW");
 
         //TODO: un-reverse this?
-        int x = (((coordNW.y + 1) * squareWidth) + w2).floor();
-        int y = (((coordNW.x + 1) * squareHeight) + h2).floor();
+        int x = (((coordNW.y + 1) * squareHeight) + h2).floor();
+        int y = (((coordNW.x + 1) * squareWidth) + w2).floor();
 
         for (int i = 0; i < 3; i++) {
           for (int x1 = 0; x1 < squareWidth; x1++) {
@@ -274,7 +269,6 @@ class BoardMatrix {
         }
       }
     }
-
 
     for (int py = 0; py < height; py++) {
       for (int px = 0; px < width; px++) {
