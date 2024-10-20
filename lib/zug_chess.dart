@@ -89,7 +89,7 @@ enum ColorStyle {
   final MatrixColorScheme colorScheme;
   const ColorStyle(this.colorScheme);
 }
-enum MixStyle {pigment,checker,additive, none}
+enum MixStyle {paint, light, checkers, none}
 
 class ColorArray {
   final List<int> values;
@@ -159,9 +159,9 @@ class Square {
     control = c;
     color = switch(mixStyle) {
       MixStyle.none => getUnmixedColor(colorScheme, maxControl),
-      MixStyle.checker => getCheckerColor(colorScheme, maxControl),
-      MixStyle.pigment => getMixColor(colorScheme, maxControl, false),
-      MixStyle.additive => getMixColor(colorScheme, maxControl, true),
+      MixStyle.checkers => getCheckerColor(colorScheme, maxControl),
+      MixStyle.paint => getMixColor(colorScheme, maxControl, false),
+      MixStyle.light => getMixColor(colorScheme, maxControl, true),
     };
   }
 

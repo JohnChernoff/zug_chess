@@ -10,7 +10,8 @@ class ChessDialogs {
       builder: (BuildContext context) {
         return AlertDialog(
           title: Text(msg),
-          content: Row(
+          content: SizedBox(width: 640, child: SingleChildScrollView(scrollDirection: Axis.horizontal,
+              child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: List.generate(pieces.length, (i) =>  InkWell(
                 child: Piece.imgMap[pieces.elementAt(i).toString()],
@@ -18,7 +19,7 @@ class ChessDialogs {
                   Navigator.of(context).pop(pieces.elementAt(i));
                 },
               ))
-          ),
+          ))),
         );
       },
     ).then((p) {

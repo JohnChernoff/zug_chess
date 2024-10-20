@@ -15,6 +15,7 @@ var boardLogger = Logger(
 );
 
 class BoardMatrix {
+  static const defSize = 100;
   final String fen;
   final int width, height;
   final int? maxControl;
@@ -23,37 +24,42 @@ class BoardMatrix {
   final MixStyle mixStyle;
   final bool blackPOV;
   final List<ControlTable>? controlList;
+  final bool offScreen;
+  final bool simple;
   late final List<Square> squares;
-  late final bool offScreen;
   ui.Image? image;
+  int get squareWidth => (width / files).floor();
+  int get squareHeight => (height / ranks).floor();
 
   static List<Square> createSquares({List<ControlTable>? controlList}) { //print("Control List: $controlList");
-
     return List.generate(controlList?.length ?? numSquares, (i) => Square(
               const Piece(PieceType.none,ChessColor.none),
-              (i).isEven ? SquareShade.light : SquareShade.dark, //control: controlList?.elementAt(numSquares - 1 - i) ?? const ControlTable(0, 0)));
+              (i * 9/8).floor().isEven ? SquareShade.light : SquareShade.dark,
               control: controlList?.elementAt(i) ?? const ControlTable(0, 0)));
   }
 
-  BoardMatrix(this.fen,this.width,this.height,UIImageCallback imgCall, {
+  BoardMatrix({
+    this.fen = startFEN,
+    this.width = defSize,
+    this.height = defSize,
     this.colorScheme = const MatrixColorScheme(deepYellow, deepBlue, Colors.black),
-    this.mixStyle = MixStyle.pigment,
+    this.mixStyle = MixStyle.paint,
     this.blackPOV  = false,
     this.maxControl,
     this.edgeColor = Colors.black,
     this.controlList,
-    this.offScreen = false}) {
-    loadImg(imgCall);
-  }
+    this.offScreen = false,
+    this.simple = false,
+    required UIImageCallback imageCallback}) { loadImg(imageCallback); }
 
-  BoardMatrix.fromFEN(this.fen, {required this.colorScheme, this.width = 480, this.height = 480, this.offScreen = false,
-    this.mixStyle = MixStyle.pigment, this.maxControl, this.edgeColor = Colors.black, this.blackPOV = false, this.controlList});
+  BoardMatrix.fromFEN(this.fen, {required this.colorScheme, this.width = defSize, this.height = defSize, this.offScreen = false,
+    this.mixStyle = MixStyle.paint, this.maxControl, this.edgeColor = Colors.black, this.blackPOV = false, this.simple = false, this.controlList});
 
   Uint8List generateRawImage() {
     squares = createSquares(controlList: controlList);
     parseFEN();
     updateControl(squaresInitialized: controlList != null);
-    return getLinearInterpolation();
+    return simple ? getSimpleSquares() : getLinearInterpolation();
   }
 
   void loadImg(UIImageCallback imgCall) {
@@ -215,11 +221,34 @@ class BoardMatrix {
     return ControlTable(whiteControl,blackControl);
   }
 
-  Uint8List getLinearInterpolation() {
-    Uint8List imgData =  Uint8List(width * height * 4); //ctx.createImageData(board_dim.board_width,board_dim.board_height);
+  Uint8List buildImage(List<List<ColorArray>> pixArray, {int offBuffX = 0, int offBuffY = 0}) {
+    Uint8List imgData =  Uint8List(width * height * 4);
+      for (int py = 0; py < height; py++) {
+        for (int px = 0; px < width; px++) {
+        int off = ((py * height) + px) * 4;
+        int px2 = px + offBuffX;
+        int py2 = py + offBuffY;
+        imgData[off] = pixArray[px2][py2].values[0];
+        imgData[off + 1] = pixArray[px2][py2].values[1];
+        imgData[off + 2] = pixArray[px2][py2].values[2];
+        imgData[off + 3] = 255;
+      }
+    }
+    return imgData;
+  }
 
-    int squareWidth = (width / ranks).floor();
-    int squareHeight = (height / files).floor();
+  Uint8List getSimpleSquares() {
+    List<List<ColorArray>> pixArray = List<List<ColorArray>>.generate(
+        width, (w) => List<ColorArray>.generate(
+        height, (h) {
+      int file = (w * files/width).floor();
+      int rank = (h * ranks/height).floor(); //print("Coord: $file,$rank");
+      return getSquare(Coord(file,rank)).color;
+    }, growable: false), growable: false);
+    return buildImage(pixArray);
+  }
+
+  Uint8List getLinearInterpolation() {
     int paddedBoardWidth = squareWidth * 10, paddedBoardHeight = squareHeight * 10;
     List<List<ColorArray>> pixArray = List<List<ColorArray>>.generate(
         paddedBoardWidth, (i) => List<ColorArray>.generate(
@@ -240,28 +269,27 @@ class BoardMatrix {
         ColorArray colorNE = coordNE.squareBounds(8) ? getSquare(coordNE).color : edgeCol;
         ColorArray colorSW = coordSW.squareBounds(8) ? getSquare(coordSW).color : edgeCol;
         ColorArray colorSE = coordSE.squareBounds(8) ? getSquare(coordSE).color : edgeCol;
-        if (colorSE == null) { boardLogger.w("WTF: $fen"); return imgData; }  //print("$colorSE , $colorSW, $colorNE, $colorNW");
+        //if (colorSE == null) { boardLogger.w("WTF: $fen"); return imgData; }  //print("$colorSE , $colorSW, $colorNE, $colorNW");
 
-        //TODO: un-reverse this?
-        int x = (((coordNW.y + 1) * squareHeight) + h2).floor();
-        int y = (((coordNW.x + 1) * squareWidth) + w2).floor();
+        int topPoint = (((coordNW.y + 1) * squareHeight) + h2).floor();
+        int leftPoint = (((coordNW.x + 1) * squareWidth) + w2).floor();
+        int rightPoint = leftPoint + squareHeight;
 
         for (int i = 0; i < 3; i++) {
           for (int x1 = 0; x1 < squareWidth; x1++) {
-            double v = x1 / squareWidth;
-            int ly = y + squareHeight;
-            int x2 = x + x1;
+            double xRatio = x1 / squareWidth;
+            int yLerp = topPoint + x1;
             if (pixArray.isNotEmpty) {
               //interpolate right
-              pixArray[y][x2].values[i] =
-                  lerp(v, colorNW.values[i], colorNE.values[i]).floor();
-              pixArray[ly][x2].values[i] =
-                  lerp(v, colorSW.values[i], colorSE.values[i]).floor();
+              pixArray[leftPoint][yLerp].values[i] =
+                  lerp(xRatio, colorNW.values[i], colorNE.values[i]).floor();
+              pixArray[rightPoint][yLerp].values[i] =
+                  lerp(xRatio, colorSW.values[i], colorSE.values[i]).floor();
               //interpolate down
               for (int y1 = 0; y1 < squareHeight; y1++) {
-                int y2 = y + y1;
-                pixArray[y2][x2].values[i] = lerp(y1 / squareHeight,
-                    pixArray[y][x2].values[i], pixArray[ly][x2].values[i]).floor();
+                int xLerp = leftPoint + y1;
+                pixArray[xLerp][yLerp].values[i] = lerp(y1 / squareHeight,
+                    pixArray[leftPoint][yLerp].values[i], pixArray[rightPoint][yLerp].values[i]).floor();
               }
             }
 
@@ -269,19 +297,7 @@ class BoardMatrix {
         }
       }
     }
-
-    for (int py = 0; py < height; py++) {
-      for (int px = 0; px < width; px++) {
-        int off = ((py * height) + px) * 4;
-        int px2 = px + squareWidth;
-        int py2 = py + squareHeight;
-        imgData[off] = pixArray[px2][py2].values[0];
-        imgData[off + 1] = pixArray[px2][py2].values[1];
-        imgData[off + 2] = pixArray[px2][py2].values[2];
-        imgData[off + 3] = 255;
-      }
-    }
-    return imgData; //ctx.putImageData(imgData,board_dim.board_x,board_dim.board_y);
+    return buildImage(pixArray, offBuffX: squareWidth, offBuffY: squareHeight);
   }
 
   double lerp(double v, int start, int end) {
